@@ -5,20 +5,25 @@
 #define MAX_LETTERS 10
 #define MAX_EXPR    256
 
-#define SEP  (-1)   /* граница между словами */
-#define END  (-2)   /* конец выражения */
+#define SEP  (-1)   // граница между словами 
+#define END  (-2)   //  конец выражения 
 
 typedef struct {
-    int  expr[MAX_EXPR];ЫЫ
+    int  expr[MAX_EXPR];
     int  expr_len;
 
-    char unic_letters[MAX_LETTERS]; /* уникальные буквы */
+    char unic_letters[MAX_LETTERS];
     int  letter_count;
     int  is_leading[MAX_LETTERS];
-} Puzzle;
 
+    int  total_words;
+    int  word_start[MAX_EXPR];
+    int  word_len[MAX_EXPR];
+    int  result_word;
+} Puzzle;
+//  изменил парсинг слов
 int parse_puzzle(const char *in, Puzzle *p) {
-    p->expr_len     = 0;
+    p->expr_len = 0;
     p->letter_count = 0;
 
     char loc_buf[512];
@@ -52,7 +57,7 @@ int parse_puzzle(const char *in, Puzzle *p) {
                 if (p->letter_count >= MAX_LETTERS)
                     return 0;
                 indx = p->letter_count;
-                p->unic_letters[indx]    = c;
+                p->unic_letters[indx] = c;
                 p->is_leading[indx] = 0;
                 p->letter_count++;
             }
@@ -73,52 +78,44 @@ int parse_puzzle(const char *in, Puzzle *p) {
 
     p->expr[p->expr_len - 1] = END;
 
-    /* считаем слова */
-    int words = 0;
-    for (int i = 0; i < p->expr_len; i++)
-        if (p->expr[i] == SEP || p->expr[i] == END)
-            words++;
+    p->total_words = 0;
+    int k = 0;
+    int i = 0;
+    p->word_start[0] = 0;
 
-    if (words < 3)        return 0;
-    if (words - 1 > 7)    return 0;
+    while (i < p->expr_len) {
+        if (p->expr[i] == SEP || p->expr[i] == END) {
+            p->word_len[k] = i - p->word_start[k];
+            k++;
+            p->total_words++;
+            if (p->expr[i] == END) break;
+            p->word_start[k] = i + 1;
+        }
+        i++;
+    }
+    p->result_word = p->total_words - 1;
+
+    if (p->total_words < 3)        return 0;
+    if (p->total_words - 1 > 7)    return 0;
 
     return 1;
 }
 
-long long word_value_at(const Puzzle *p, int start, const int *digit, int *next) {
-    long long v = 0;
-    int i = start;
-    while (p->expr[i] != SEP && p->expr[i] != END) {
-        v = v * 10 + digit[p->expr[i]];
-        i++;
-    }
-    *next = i + 1;
-    return v;
-}
-
-
 int check(const Puzzle *p, const int *digit) {
-    int total_words = 0;
-    for (int k = 0; k < p->expr_len; k++)
-        if (p->expr[k] == SEP || p->expr[k] == END)
-            total_words++;
-
     long long sum = 0;
     long long result = 0;
-    int word_no = 0;
-    int i = 0;
 
-    while (i < p->expr_len) {
-        int next;
-        long long v = word_value_at(p, i, digit, &next);
+    for (int k = 0; k < p->total_words; k++) {
+        int start = p->word_start[k];
+        int len   = p->word_len[k];
+        long long v = 0;
+        for (int j = 0; j < len; j++)
+            v = v * 10 + digit[p->expr[start + j]];
 
-        if (word_no == total_words - 1)
+        if (k == p->result_word)
             result = v;
         else
             sum += v;
-
-        i = next;
-        word_no++;
     }
 
     return sum == result;
@@ -152,30 +149,22 @@ int permute(const Puzzle *p, int pos) {
 }
 
 void format_answer(const Puzzle *p, const int *digit, char *out) {
-    out[0] = '\0';
-    char tmp[16];
+    char *o = out;
 
-    int total_words = 0;
-    for (int k = 0; k < p->expr_len; k++)
-        if (p->expr[k] == SEP || p->expr[k] == END)
-            total_words++;
+    for (int k = 0; k < p->total_words; k++) {
+        int start = p->word_start[k];
+        int len   = p->word_len[k];
 
-    int word_no = 0;
-    for (int i = 0; i < p->expr_len; i++) {
-        int e = p->expr[i];
+        for (int j = 0; j < len; j++)
+            *o++ = (char)('0' + digit[p->expr[start + j]]);
 
-        if (e == SEP || e == END) {
-            word_no++;
-            if (e == END) break;
-            if (word_no == total_words - 1)
-                strcat(out, " = ");
-            else
-                strcat(out, " + ");
-        } else {
-            sprintf(tmp, "%d", digit[e]);
-            strcat(out, tmp);
+        if (k == p->result_word - 1) {
+            memcpy(o, " = ", 3); o += 3;
+        } else if (k != p->total_words - 1) {
+            memcpy(o, " + ", 3); o += 3;
         }
     }
+    *o = '\0';
 }
 
 int solve(const char *puzzle, char *out) {
@@ -206,6 +195,6 @@ int main(void) {
     }
     solve(input, output);
     printf("result: %s\n", output);
-    
+
     return 0;
 }
