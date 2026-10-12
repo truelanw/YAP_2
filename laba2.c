@@ -23,8 +23,8 @@ typedef struct {
 static int used[10];
 static int digit[MAX_LETTERS];
 static int solution[MAX_LETTERS];
-static int assigned[MAX_LETTERS];
 
+/* Парсер сохраняет структуру выражения и заранее вычисляет длины слов. */
 static int parse_puzzle(const char *in, Puzzle *p) {
     memset(p, 0, sizeof(*p));
     char loc_buf[512];
@@ -40,16 +40,15 @@ static int parse_puzzle(const char *in, Puzzle *p) {
         p->word_start[p->total_words] = p->expr_len;
         p->word_len[p->total_words] = length;
 
-        for (int i = 0; i < length; i++) {
+        for (int i = 0; i < length; ++i) {
             char c = token[i];
             int indx = -1;
-            for (int j = 0; j < p->letter_count; j++) {
+            for (int j = 0; j < p->letter_count; ++j) {
                 if (p->unic_letters[j] == c) {
                     indx = j;
                     break;
                 }
             }
-
             if (indx == -1) {
                 if (p->letter_count >= MAX_LETTERS) return 0;
                 indx = p->letter_count++;
@@ -79,91 +78,6 @@ static int parse_puzzle(const char *in, Puzzle *p) {
     return 1;
 }
 
-static long long word_value(const Puzzle *p, int k, const int *digits) {
-    long long value = 0;
-    int start = p->word_start[k], len = p->word_len[k];
-    for (int j = 0; j < len; ++j)
-        value = value * 10 + digits[p->expr[start + j]];
-    return value;
-}
-
-static int check(const Puzzle *p, const int *digits) {
-    long long sum = 0;
-    for (int k = 0; k < p->result_word; ++k)
-        sum += word_value(p, k, digits);
-    return sum == word_value(p, p->result_word, digits);
-}
-
-static int partial_check(const Puzzle *p) {
-    int result_len = p->word_len[p->result_word];
-    int columns = p->max_addend_len;
-    if (result_len > columns) columns = result_len;
-    long long carry = 0;
-
-    for (int col = 0; col < columns; ++col) {
-        long long sum = carry;
-        int complete = 1;
-
-        for (int k = 0; k < p->result_word; ++k) {
-            int len = p->word_len[k];
-            if (col >= len) continue;
-
-            int index = p->word_start[k] + len - 1 - col;
-            int letter = p->expr[index];
-            if (!assigned[letter]) {
-                complete = 0;
-                break;
-            }
-            sum += digit[letter];
-        }
-
-        if (!complete) return 1;
-
-        int expected = (int)(sum % 10);
-        carry = sum / 10;
-
-        if (col < result_len) {
-            int index = p->word_start[p->result_word] + result_len - 1 - col;
-            int result_letter = p->expr[index];
-
-            if (assigned[result_letter]) {
-                if (digit[result_letter] != expected) return 0;
-            } else if (used[expected]) {
-                return 0;
-            }
-        } else if (expected != 0) {
-            return 0;
-        }
-    }
-
-    return carry == 0;
-}
-
-static int permute(const Puzzle *p, int pos) {
-    if (pos == p->letter_count) {
-        if (check(p, digit)) {
-            memcpy(solution, digit, sizeof(int) * (size_t)p->letter_count);
-            return 1;
-        }
-        return 0;
-    }
-
-    for (int d = 0; d <= 9; ++d) {
-        if (used[d]) continue;
-        if (d == 0 && p->is_leading[pos]) continue;
-
-        used[d] = 1;
-        digit[pos] = d;
-        assigned[pos] = 1;
-
-        if (partial_check(p) && permute(p, pos + 1)) return 1;
-
-        assigned[pos] = 0;
-        used[d] = 0;
-    }
-    return 0;
-}
-
 static void format_answer(const Puzzle *p, const int *digits, char *out) {
     char *o = out;
     for (int k = 0; k < p->total_words; ++k) {
@@ -180,12 +94,88 @@ static void format_answer(const Puzzle *p, const int *digits, char *out) {
     *o = '\0';
 }
 
+static int solve_column(const Puzzle *p, int col, long long carry);
+
+static int assign_addend_digits(const Puzzle *p, int col, int word,
+                                long long carry, long long sum) {
+    if (word == p->result_word) {
+        int expected = (int)(sum % 10);
+        long long next_carry = sum / 10;
+        int result_len = p->word_len[p->result_word];
+
+        if (col >= result_len) {
+            if (expected != 0) return 0;
+            return solve_column(p, col + 1, next_carry);
+        }
+
+        int index = p->word_start[p->result_word] + result_len - 1 - col;
+        int result_letter = p->expr[index];
+
+        if (digit[result_letter] != -1) {
+            if (digit[result_letter] != expected) return 0;
+            return solve_column(p, col + 1, next_carry);
+        }
+
+        if (used[expected]) return 0;
+        if (expected == 0 && p->is_leading[result_letter]) return 0;
+
+        digit[result_letter] = expected;
+        used[expected] = 1;
+
+        if (solve_column(p, col + 1, next_carry)) return 1;
+
+        used[expected] = 0;
+        digit[result_letter] = -1;
+        return 0;
+    }
+
+    int len = p->word_len[word];
+    if (col >= len)
+        return assign_addend_digits(p, col, word + 1, carry, sum);
+
+    int index = p->word_start[word] + len - 1 - col;
+    int letter = p->expr[index];
+
+    if (digit[letter] != -1)
+        return assign_addend_digits(p, col, word + 1, carry,
+                                    sum + digit[letter]);
+
+    for (int d = 0; d <= 9; ++d) {
+        if (used[d]) continue;
+        if (d == 0 && p->is_leading[letter]) continue;
+
+        digit[letter] = d;
+        used[d] = 1;
+
+        if (assign_addend_digits(p, col, word + 1, carry, sum + d))
+            return 1;
+
+        used[d] = 0;
+        digit[letter] = -1;
+    }
+    return 0;
+}
+
+static int solve_column(const Puzzle *p, int col, long long carry) {
+    int result_len = p->word_len[p->result_word];
+    int max_columns = p->max_addend_len > result_len
+                    ? p->max_addend_len : result_len;
+
+    if (col >= max_columns)
+        return carry == 0;
+
+    return assign_addend_digits(p, col, 0, carry, carry);
+}
+
 static int solve(const char *input, char *out) {
     Puzzle p;
-    memset(used, 0, sizeof used);
-    memset(assigned, 0, sizeof assigned);
     if (!parse_puzzle(input, &p)) return 0;
-    if (!permute(&p, 0)) return 0;
+
+    for (int i = 0; i < MAX_LETTERS; ++i) digit[i] = -1;
+    memset(used, 0, sizeof used);
+
+    if (!solve_column(&p, 0, 0)) return 0;
+    memcpy(solution, digit, sizeof solution);
     format_answer(&p, solution, out);
     return 1;
 }
@@ -198,6 +188,7 @@ int main(void) {
         return 1;
     }
     input[strcspn(input, "\r\n")] = '\0';
+
     if (solve(input, output)) printf("Result: %s\n", output);
     else printf("Solution not found\n");
     return 0;
